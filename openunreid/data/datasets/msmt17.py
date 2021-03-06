@@ -21,7 +21,7 @@ class MSMT17(ImageDataset):
         - cameras: 15.
     """
 
-    dataset_dir = "msmt17"
+    dataset_dir = ""
     dataset_url = None
 
     def __init__(self, root, mode, del_labels=False, **kwargs):
@@ -31,7 +31,7 @@ class MSMT17(ImageDataset):
         self.download_dataset(self.dataset_dir, self.dataset_url)
 
         # allow alternative directory structure
-        dataset_dir = osp.join(self.dataset_dir, "MSMT17_V1")
+        dataset_dir = osp.join(self.dataset_dir, "MSMT17_V2")
         if osp.isdir(dataset_dir):
             self.dataset_dir = dataset_dir
         else:

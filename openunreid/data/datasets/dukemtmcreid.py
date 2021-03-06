@@ -23,7 +23,7 @@ class DukeMTMCreID(ImageDataset):
         - cameras: 8.
     """
 
-    dataset_dir = "dukemtmcreid"
+    dataset_dir = "DukeMTMC-reID"
     dataset_url = (
         "https://drive.google.com/file/d/1jjE85dRCMOgRtvJ5RQV9-Afs-2_5dY3O/view"
     )

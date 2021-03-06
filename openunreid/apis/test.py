@@ -170,7 +170,7 @@ def infer_gan(
 
     progress = Meters({"Time": ":.3f", "Data": ":.3f"}, len(data_loader), prefix=prefix)
     if rank == 0:
-        mkdir_if_missing(osp.join(cfg.work_dir, dataset_name+'_translated'))
+        mkdir_if_missing(osp.join(cfg.work_dir, dataset_name))
 
     model.eval()
     data_iter = iter(data_loader)
@@ -187,7 +187,10 @@ def infer_gan(
         outputs = model(images)
 
         for idx in range(outputs.size(0)):
-            save_path = os.path.join(cfg.work_dir, dataset_name+'_translated', osp.basename(data['path'][idx]))
+            save_path = os.path.join(cfg.work_dir, dataset_name,data['path'][idx].split('/')[-2])
+            if not osp.exists(save_path):
+                os.makedirs(save_path)
+            save_path = osp.join(save_path, osp.basename(data['path'][idx]))
             if (osp.isfile(save_path)):
                 continue
             img_np = tensor2im(outputs[idx], mean=cfg.DATA.norm_mean, std=cfg.DATA.norm_std)

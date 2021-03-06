@@ -5,13 +5,17 @@ import copy
 import os.path as osp
 import tarfile
 import zipfile
+import numpy as np
+import torchvision.transforms as T
+import cv2
 
+from torchvision.utils import save_image as save_image
 from ...utils import bcolors
 from ...utils.dist_utils import get_dist_info, synchronize
 from ...utils.file_utils import download_url, download_url_from_gd, mkdir_if_missing
 from ..utils.data_utils import read_image
-
-
+from PIL import Image
+from os import listdir as osl
 class Dataset(object):
     """An abstract class representing a Dataset.
 
@@ -154,17 +158,22 @@ class ImageDataset(Dataset):
         data in each batch has shape (batch_size, channel, height, width).
     """
 
-    def __init__(self, data, mode, pseudo_labels=None, **kwargs):
+    def __init__(self, data, mode, cfg=None ,data_idx=0,pseudo_labels=None, **kwargs):
         if "verbose" not in kwargs.keys():
             kwargs["verbose"] = False if (pseudo_labels is not None) else True
         super(ImageDataset, self).__init__(data, mode, **kwargs)
-
         # "all_data" stores the original data list
         # "data" stores the pseudo-labeled data list
+        self.data_idx = data_idx
+        self.cfg = cfg
         self.all_data = copy.deepcopy(self.data)
-
+        self._set_mask_params(cfg,mode)
         if pseudo_labels is not None:
             self.renew_labels(pseudo_labels)
+        self._mask_method = {
+            0:self._get_fg_img,
+            1:self._get_rand_bg,
+        }
 
     def __getitem__(self, indices):
         if isinstance(indices, (tuple, list)):
@@ -173,18 +182,163 @@ class ImageDataset(Dataset):
 
     def _get_single_item(self, index):
         img_path, pid, camid = self.data[index]
+        if self.mode == 'trainval':
+            img_path = img_path.replace(str(self.cfg.DATA_ROOT),str(self.cfg.DATA_ROOT_REPLACE))
         img = read_image(img_path)
         if self.transform is not None:
-            img = self.transform(img)
-
-        return {
+            img = self.transform(img)  
+        data_dict = {
             "img": img,
             "path": img_path,
             "id": pid,
             "cid": camid,
             "ind": index,
-        }
+        }      
 
+        # modified
+        # fg,bg can be used to calculate loss
+
+        if self.mask:
+            mask_path = img_path.replace(self.original_dir,self.mask_dir)
+            img,fg,bg = self._get_masked_img(mask_path,img,self.mask_class,self.is_hard,self.is_lip)
+            if np.random.uniform(0,1)>self.repalce_proportion:
+                data_dict['img']=img
+            data_dict['fg']=fg
+            data_dict['bg']=bg
+        return data_dict
+    #modified
+    def _get_masked_img(self,mask_path,img,class_name,is_hard,is_lip):
+        '''
+        img: original image
+        there are 3 different classes, [
+            only_foreground,
+            foreground+random_backgroud,
+            foreground+target_background
+            ]
+        is_hard : soft mask or hard mask
+            soft: 0 - 1
+            hard: 0 or 1
+        '''
+        h,w = img.shape[1],img.shape[2]
+        #resize mask and totensor
+        mask = Image.fromarray(np.load(mask_path.replace('jpg','npy')))
+        transform = T.Compose([
+            T.Resize((h,w)),T.ToTensor()
+        ])
+        mask = transform(mask)
+        if is_hard:
+        # lip mask should include 0 or 1
+            if is_lip:
+                mask[mask>0]=1
+            else:
+                mask[mask<0.5]=0
+                mask[mask>=0.5]=1
+        if class_name!=2:
+            return self._mask_method[class_name](mask,img)
+        else:
+            return img,mask,1-mask
+
+    def _get_fg_img(self,mask,img):
+        img = img*mask
+        bg = 1-mask
+        return img,mask,bg
+
+    def _get_rand_bg(self,mask,img):
+        # chosen_bg = np.random.randint(0,len(bg_paths))
+        bg_candidates = []
+        rand_rates,chosen_indexes = self._gen_rand_rate_and_path(self.mix_num)
+        h,w = img.shape[1],img.shape[2]
+
+        #read bgs
+        for chosen_index in chosen_indexes:
+            img_bg = cv2.imread(osp.join(self.rand_bg_dir,self.bg_paths[chosen_index]))
+            img_bg = cv2.resize(img_bg,(w,h))
+            bg_candidates.append(img_bg)
+        # init bg_img
+        # bg_candidates[0]+bg_candidates[1]
+        bg_img = np.zeros_like(bg_candidates[0],dtype=np.float64)
+
+        # stack imgs
+        for index,rate in enumerate(rand_rates):
+            temp = rate*bg_candidates[index]
+            bg_img += temp
+        bg_img = np.uint8(bg_img.clip(min=0, max=255))
+        bg_img = Image.fromarray(cv2.cvtColor(bg_img,cv2.COLOR_BGR2RGB))
+        transform = T.Compose([
+            T.Resize((h,w)),T.ToTensor()
+        ])
+        bg_img = self.transform(bg_img)
+        # bg_img = transform(bg_img)
+        bg = 1-mask
+        fg = img*mask
+        bg_img = bg_img*bg
+        img = bg_img + fg
+        return img,mask,bg
+    def _set_mask_params(self,cfg,mode):
+        if mode=='query' or mode=='gallery' or mode=='query+gallery':
+            print(mode)
+            self.mask = cfg.DATA.TEST.mask[self.data_idx]
+            print('is_mask:',self.mask)
+            if self.mask:
+                # self.replace_proportion to control the proportion of using fg image or rand_bg image,
+                # if you set it as 1 ,it means use original image ,set it as 0 means use all fg image or rand_bg image
+                self.mix_num = cfg.DATA.TEST.mix_num
+                self.repalce_proportion=cfg.DATA.TEST.repalce_proportion
+                self.mask_class = cfg.DATA.TEST.mask_class[self.data_idx]
+                self.is_hard = cfg.DATA.TEST.is_hard[self.data_idx]
+                self.is_lip = cfg.DATA.TEST.is_lip[self.data_idx]
+                self.mask_dir = cfg.DATA.TEST.mask_dir[self.data_idx]
+                self.original_dir = cfg.DATA.TEST.original_dir[self.data_idx]
+                print('is_hard:',self.is_hard,'is_lip:',self.is_lip)
+                self.rand_bg_dir = self.cfg.DATA.TEST.rand_bg_dir[self.data_idx]
+                self.bg_paths = osl(self.rand_bg_dir)
+        else:
+            self.mask = cfg.DATA.TRAIN.mask[self.data_idx]
+            print('is_mask:',self.mask)
+
+            if self.mask:
+                self.mix_num = cfg.DATA.TRAIN.mix_num
+                # self.replace_proportion to control the proportion of using fg image or rand_bg image,
+                # if you set it as 1 ,it means use original image ,set it as 0 means use all fg image or rand_bg image
+                self.repalce_proportion=cfg.DATA.TRAIN.repalce_proportion
+                self.mask_class = cfg.DATA.TRAIN.mask_class[self.data_idx]
+                self.is_hard = cfg.DATA.TRAIN.is_hard[self.data_idx]
+                self.is_lip = cfg.DATA.TRAIN.is_lip[self.data_idx]
+                self.mask_dir = cfg.DATA.TRAIN.mask_dir[self.data_idx]
+                self.original_dir = cfg.DATA.TRAIN.original_dir[self.data_idx]
+                print('is_hard:',self.is_hard,'is_lip:',self.is_lip)
+                self.rand_bg_dir = self.cfg.DATA.TRAIN.rand_bg_dir[self.data_idx]
+                self.bg_paths = osl(self.rand_bg_dir)
+    def _gen_rand_rate_and_path(self,mix_num=3):
+        '''mix_num:
+           number of mix up bgs,defalut is 3,if you only want one bg, set it as 1
+           if we want  3 bgs, we hope these 3 bgs have similar weights, so the center of 
+           rand number is 1/mix_num,and the range of rand we set as 1/mix_num +- 0.2
+        '''
+        center = 1/mix_num
+        rand_rates = []
+        chosen_indexes = []
+        if mix_num==1:
+            rand_rates = [1,]
+        elif mix_num==2:
+            a = np.random.uniform(center-0.2,center+0.2)
+            rand_rates = [a,1-a]
+        elif mix_num==3:
+            a = np.random.uniform(center-0.2,center+0.2)
+            b = np.random.uniform(center-0.2,center+0.2)    
+            rand_rates = [1-max(a,b),min(a,b),abs(a-b)]
+        length_bg_paths = len(self.bg_paths)-1
+        for i in range(mix_num):
+            chosen_indexes.append(np.random.randint(0,length_bg_paths))
+        return rand_rates,chosen_indexes
+        # outline read background image
+    # def _get_rand_tg(self,mask,img):
+    #     '''
+    #     online read background image ,get a image form target domain,use mask and 1-mask to 
+    #     a new image, you can look how to implement in a cross domain code about where is the image
+    #     come from
+    #     '''
+    #     raise NotImplementedError
     def __add__(self, other):
         """
         work for combining query and gallery into the test data loader
@@ -192,6 +346,7 @@ class ImageDataset(Dataset):
         return ImageDataset(
             self.data + other.data,
             self.mode + "+" + other.mode,
+            cfg=self.cfg,
             pseudo_labels=None,
             transform=self.transform,
             verbose=False,

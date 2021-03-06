@@ -50,7 +50,6 @@ class JointDataset(Dataset):
         assert isinstance(
             indices, (tuple, list)
         ), "sampled indexes for JointDataset should be list or tuple"
-
         return [
             dataset._get_single_item(index)
             for index, dataset in zip(indices, self.datasets)
@@ -83,7 +82,7 @@ class IterLoader:
         if self.length is not None:
             return self.length
         return len(self.loader)
-
+    # dont change self.loader ,just change self.iter 
     def new_epoch(self, epoch):
         self.loader.sampler.set_epoch(epoch)
         self.iter = iter(self.loader)

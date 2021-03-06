@@ -59,7 +59,7 @@ def build_train_dataloader(
             if unsup_dataset_indexes is None:
                 datasets.append(
                     build_dataset(
-                        dn, data_root, dm, del_labels=False, transform=train_transformer
+                        dn, data_root, dm, cfg=cfg ,dataset_idx=idx,del_labels=False, transform=train_transformer
                     )
                 )
             else:
@@ -69,6 +69,8 @@ def build_train_dataloader(
                             dn,
                             data_root,
                             dm,
+                            cfg=cfg,
+                            data_idx=idx,
                             del_labels=False,
                             transform=train_transformer,
                         )
@@ -85,6 +87,8 @@ def build_train_dataloader(
                             dn,
                             data_root,
                             dm,
+                            cfg=cfg,
+                            data_idx=idx,
                             pseudo_labels=new_labels,
                             del_labels=True,
                             transform=train_transformer,
@@ -101,7 +105,6 @@ def build_train_dataloader(
         combined_datasets = JointDataset(datasets)
     else:
         combined_datasets = copy.deepcopy(datasets)
-
     # build sampler
     train_sampler = build_train_sampler(cfg, combined_datasets, epoch=epoch)
 
@@ -183,7 +186,6 @@ def build_val_dataloader(
 
     # build transformer
     test_transformer = build_test_transformer(cfg)
-
     # build individual datasets
     datasets, vals = [], []
     for dn, dm in zip(dataset_names, dataset_modes):
@@ -191,14 +193,14 @@ def build_val_dataloader(
             dn,
             data_root,
             dm,
+            cfg=cfg,
             del_labels=False,
             transform=test_transformer,
             verbose=(not for_clustering),
         )
         datasets.append(val_data)
         vals.append(val_data.data)
-
-    # build sampler
+    # build sa  mpler
     if not one_gpu:
         test_sampler = build_test_sampler(cfg, datasets)
     else:
@@ -247,10 +249,10 @@ def build_test_dataloader(cfg, one_gpu=False, **kwargs):
     datasets, queries, galleries = [], [], []
     for dn in dataset_names:
         query_data = build_dataset(
-            dn, data_root, "query", del_labels=False, transform=test_transformer
+            dn, data_root, "query",cfg=cfg, del_labels=False, transform=test_transformer
         )
         gallery_data = build_dataset(
-            dn, data_root, "gallery", del_labels=False, transform=test_transformer
+            dn, data_root, "gallery",cfg=cfg, del_labels=False, transform=test_transformer
         )
         datasets.append(query_data + gallery_data)
         queries.append(query_data.data)

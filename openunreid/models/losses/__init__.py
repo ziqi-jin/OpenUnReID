@@ -7,6 +7,7 @@ from .memory import HybridMemory
 from .triplet import SoftmaxTripletLoss, SoftSoftmaxTripletLoss, TripletLoss
 from .gan_loss import GANLoss
 from .sia_loss import SiaLoss
+from .bg_loss import BG_loss
 
 
 def build_loss(
@@ -68,6 +69,9 @@ def build_loss(
 
         elif (loss_name.startswith('sia')):
             criterion = SiaLoss(margin=2.0)
+
+        elif (loss_name == 'fg_consist'):
+            criterion = BG_loss()
 
         else:
             raise KeyError("Unknown loss:", loss_name)

@@ -18,10 +18,8 @@ class Market1501(ImageDataset):
         - identities: 1501 (+1 for background).
         - images: 12936 (train) + 3368 (query) + 15913 (gallery).
     """
-
-    dataset_dir = "market1501"
+    dataset_dir = "Market"
     dataset_url = "http://188.138.127.15:81/Datasets/Market-1501-v15.09.15.zip"
-
     def __init__(self, root, mode, val_split=0.2, del_labels=False, **kwargs):
         self.root = osp.abspath(osp.expanduser(root))
         self.dataset_dir = osp.join(self.root, self.dataset_dir)

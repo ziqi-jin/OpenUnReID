@@ -4,6 +4,7 @@ import collections
 import os.path as osp
 import time
 import warnings
+import os
 
 import torch
 import torch.nn as nn
@@ -19,6 +20,7 @@ from ..core.label_generators import LabelGenerator
 from ..core.metrics.accuracy import accuracy
 from ..data import build_train_dataloader, build_val_dataloader
 from ..data.utils.data_utils import save_image
+from torchvision.utils import save_image as s_image
 from ..utils import bcolors
 from ..utils.dist_utils import get_dist_info, synchronize
 from ..utils.meters import Meters
@@ -28,6 +30,8 @@ from ..utils.file_utils import mkdir_if_missing
 from ..utils.torch_utils import tensor2im
 from .test import val_reid
 from .train import batch_processor, set_random_seed
+from openunreid.data import build_test_dataloader
+from .test import test_reid
 
 
 class BaseRunner(object):
@@ -45,7 +49,7 @@ class BaseRunner(object):
         train_sets=None,
         lr_scheduler=None,
         meter_formats=None,
-        print_freq=10,
+        print_freq=100,
         reset_optim=True,
         label_generator=None,
     ):
@@ -132,6 +136,16 @@ class BaseRunner(object):
                 else:
                     self.save()
 
+            # test    
+            # if (ep + 1) % self.cfg.TRAIN.test_freq == 0 or (
+            #     ep + 1
+            # ) == self.cfg.TRAIN.epochs:
+            #     test_loaders, queries, galleries = build_test_dataloader(self.cfg)
+            #     for i, (loader, query, gallery) in enumerate(zip(test_loaders, queries, galleries)):
+            #         cmc, mAP = test_reid(
+            #             self.cfg, self.model, loader, query, gallery, dataset_name=self.cfg.TEST.datasets[i]
+            #         )    
+            #         self.save(mAP)    
             # update learning rate
             if self.lr_scheduler is not None:
                 if isinstance(self.lr_scheduler, list):
@@ -216,11 +230,17 @@ class BaseRunner(object):
 
             if isinstance(self.train_loader, list):
                 batch = [loader.next() for loader in self.train_loader]
+                # print(len(batch), type(batch[0]),type(batch[1]))
+                for key, value in batch[0].items():
+                    extra = value.shape if isinstance(value, torch.Tensor) else ''
+                    # print('key-type(value): ',key, type(value), extra)
             else:
                 batch = self.train_loader.next()
             # self.train_progress.update({'Data': time.time()-end})
 
             if self.scaler is None:
+                # print(iter,len(batch))
+                # print(batch[0]['img'].shape)
                 loss = self.train_step(iter, batch)
                 if (loss > 0):
                     self.optimizer.zero_grad()
@@ -259,6 +279,13 @@ class BaseRunner(object):
 
         inputs = data["img"][0].cuda()
         targets = data["id"].cuda()
+
+        ##modfied save_image
+        # log_img_dir = osp.join(self.cfg.work_dir,'img')
+        # if not osp.exists(log_img_dir):
+        #     os.makedirs(log_img_dir)
+        # s_image(inputs,osp.join(log_img_dir,str(iter)+'.jpg'))
+
 
         results = self.model(inputs)
         if "prob" in results.keys():
@@ -433,6 +460,9 @@ class GANBaseRunner(BaseRunner):
         self.real_A = data_src['img'].cuda()
         self.real_B = data_tgt['img'].cuda()
 
+        # if data_src['fg'] not None:
+        #     self.mask_A = data_src['fg'].cuda()
+        #     self.mask_B = data_tgt['fg'].cuda()
         # Forward
         self.fake_B = self.model['G_A'](self.real_A)     # G_A(A)
         self.fake_A = self.model['G_B'](self.real_B)     # G_B(B)
@@ -499,6 +529,166 @@ class GANBaseRunner(BaseRunner):
         loss = loss_G * self.cfg.TRAIN.LOSS.losses['gan_G'] + \
                 loss_recon * self.cfg.TRAIN.LOSS.losses['recon'] + \
                 loss_idt * self.cfg.TRAIN.LOSS.losses['ide']
+        if self.scaler is None:
+            loss.backward(retain_graph=retain_graph)
+        else:
+            with autocast(enabled=False):
+                self.scaler.scale(loss).backward(retain_graph=retain_graph)
+
+        meters = {'gan_G': loss_G.item(),
+                  'recon': loss_recon.item(),
+                  'ide': loss_idt.item()}
+        self.train_progress.update(meters)
+
+    def backward_D_basic(self, netD, real, fake, fake_pool):
+        # Real
+        pred_real = netD(real)
+        loss_D_real = self.criterions['gan_D'](pred_real, True)
+        # Fake
+        pred_fake = netD(fake_pool.query(fake))
+        loss_D_fake = self.criterions['gan_D'](pred_fake, False)
+        # Combined loss and calculate gradients
+        loss_D = (loss_D_real + loss_D_fake) * 0.5
+        loss = loss_D * self.cfg.TRAIN.LOSS.losses['gan_D']
+        if self.scaler is None:
+            loss.backward()
+        else:
+            with autocast(enabled=False):
+                self.scaler.scale(loss).backward()
+        return loss_D.item()
+
+    def backward_D(self):
+        loss_D_A = self.backward_D_basic(self.model['D_A'], self.real_A, self.fake_A, self.fake_A_pool)
+        loss_D_B = self.backward_D_basic(self.model['D_B'], self.real_B, self.fake_B, self.fake_B_pool)
+        meters = {'gan_D': loss_D_A + loss_D_B}
+        self.train_progress.update(meters)
+
+    def set_requires_grad(self, nets, requires_grad=False):
+        if not isinstance(nets, list):
+            nets = [nets]
+        for net in nets:
+            if net is not None:
+                for param in net.parameters():
+                    param.requires_grad = requires_grad
+
+    def save_imgs(self, names):
+        for name in names:
+            img = getattr(self, name)[0]
+            img_np = tensor2im(img, mean=self.cfg.DATA.norm_mean, std=self.cfg.DATA.norm_std)
+            save_image(img_np, osp.join(self.save_dir, 'epoch_{}_{}.jpg'.format(self._epoch, name)))
+
+
+class FG_GANBaseRunner(BaseRunner):
+    """
+    Domain-translation Base Runner
+    Re-implementation of CycleGAN
+    """
+
+    def __init__(
+        self,
+        cfg,
+        model,
+        optimizer,
+        criterions,
+        train_loader,
+        **kwargs
+    ):
+        super(FG_GANBaseRunner, self).__init__(
+            cfg, model, optimizer, criterions, train_loader, **kwargs
+        )
+
+        self.save_dir = osp.join(self.cfg.work_dir, 'images')
+        if self._rank == 0:
+            mkdir_if_missing(self.save_dir)
+
+        self.fake_A_pool = ImagePool()
+        self.fake_B_pool = ImagePool()
+
+    def train_step(self, iter, batch):
+        data_src, data_tgt = batch[0], batch[1]
+
+        self.real_A = data_src['img'].cuda()
+        self.real_B = data_tgt['img'].cuda()
+        self.mask_A = data_src['fg'].cuda()
+        # self.mask_B = data_tgt['fg'].cuda()
+        # if data_src['fg'] not None:
+        #     self.mask_A = data_src['fg'].cuda()
+        #     self.mask_B = data_tgt['fg'].cuda()
+        # Forward
+        self.fake_B = self.model['G_A'](self.real_A)     # G_A(A)
+        self.fake_A = self.model['G_B'](self.real_B)     # G_B(B)
+        self.rec_A = self.model['G_B'](self.fake_B)    # G_B(G_A(A))
+        self.rec_B = self.model['G_A'](self.fake_A)    # G_A(G_B(B))
+
+        # G_A and G_B
+        self.set_requires_grad([self.model['D_A'], self.model['D_B']], False) # save memory
+        if self.scaler is None:
+            self.optimizer['G'].zero_grad()
+        else:
+            with autocast(enabled=False):
+                self.optimizer['G'].zero_grad()
+        self.backward_G()
+        if self.scaler is None:
+            self.optimizer['G'].step()
+        else:
+            with autocast(enabled=False):
+                self.scaler.step(self.optimizer['G'])
+
+        # D_A and D_B
+        self.set_requires_grad([self.model['D_A'], self.model['D_B']], True)
+        if self.scaler is None:
+            self.optimizer['D'].zero_grad()
+        else:
+            with autocast(enabled=False):
+                self.optimizer['D'].zero_grad()
+        self.backward_D()
+        if self.scaler is None:
+            self.optimizer['D'].step()
+        else:
+            with autocast(enabled=False):
+                self.scaler.step(self.optimizer['D'])
+
+        # save translated images
+        if self._rank == 0:
+            self.save_imgs(['real_A', 'real_B', 'fake_A', 'fake_B', 'rec_A', 'rec_B'])
+
+        return 0
+
+    def backward_G(self, retain_graph=False):
+        """Calculate the loss for generators G_A and G_B"""
+        # Adversarial loss D_A(G_A(B))
+        loss_G_A = self.criterions['gan_G'](self.model['D_A'](self.fake_A), True)
+        # Adversarial loss D_B(G_B(A))
+        loss_G_B = self.criterions['gan_G'](self.model['D_B'](self.fake_B), True)
+        loss_G = loss_G_A + loss_G_B
+
+        # Forward cycle loss || G_A(G_B(A)) - A||
+        loss_recon_A = self.criterions['recon'](self.rec_A, self.real_A)
+        # Backward cycle loss || G_B(G_A(B)) - B||
+        loss_recon_B = self.criterions['recon'](self.rec_B, self.real_B)
+        loss_recon = loss_recon_A + loss_recon_B
+
+        # G_A should be identity if real_B is fed: ||G_B(B) - B||
+        idt_A = self.model['G_A'](self.real_B)
+        loss_idt_A = self.criterions['ide'](idt_A, self.real_B)
+        # G_B should be identity if real_A is fed: ||G_A(A) - A||
+        idt_B = self.model['G_B'](self.real_A)
+        loss_idt_B = self.criterions['ide'](idt_B, self.real_A)
+        loss_idt = loss_idt_A + loss_idt_B
+
+        
+        loss_fg_A = self.criterions['fg_consist'](self.real_A,self.fake_A,self.mask_A)
+        # loss_fg_B = self.criterions['fg_consist'](self.real_B,self.fake_B,self.mask_B)
+
+        loss_fg_B = self.criterions['recon'](self.real_B,self.fake_B)
+        loss_fg = loss_fg_A + loss_fg_B
+        
+
+        # combined loss and calculate gradients
+        loss = loss_G * self.cfg.TRAIN.LOSS.losses['gan_G'] + \
+                loss_recon * self.cfg.TRAIN.LOSS.losses['recon'] + \
+                loss_idt * self.cfg.TRAIN.LOSS.losses['ide'] + \
+                loss_fg * self.cfg.TRAIN.LOSS.losses['fg_consist']
         if self.scaler is None:
             loss.backward(retain_graph=retain_graph)
         else:
