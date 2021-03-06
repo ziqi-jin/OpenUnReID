@@ -22,7 +22,7 @@ from openunreid.utils.torch_utils import copy_state_dict, load_checkpoint
 
 def parge_config():
     parser = argparse.ArgumentParser(description="GAN model inference")
-    parser.add_argument("resume", help="the checkpoint file to test")
+    parser.add_argument("--resume", help="the checkpoint file to test")
     parser.add_argument("--config", help="test config file path")
     parser.add_argument(
         "--launcher",
@@ -93,13 +93,15 @@ def main():
                         for_clustering=True,
                         all_datasets=True
                     )
-
+    # print(len(test_loader[0]))
+    # return
     # start testing
     infer_gan(
         cfg,
         model,
         test_loader[0], # source dataset
-        dataset_name=list(cfg.TRAIN.datasets.keys())[0]
+        # dataset_name=list(cfg.TRAIN.datasets.keys())[0]
+        dataset_name=cfg.TRAIN.data_names[0]
     )
 
     # print time

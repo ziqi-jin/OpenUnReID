@@ -88,13 +88,12 @@ def main():
 
     # build train loader
     train_loader, _ = build_train_dataloader(cfg, joint=False)
-
     # build model
     model = build_gan_model(cfg)
     for key in model.keys():
         model[key].cuda()
 
-    if dist:
+    if dist: 
         ddp_cfg = {
             "device_ids": [cfg.gpu],
             "output_device": cfg.gpu,
@@ -111,7 +110,7 @@ def main():
     optimizer['G'] = build_optimizer([model['G_A'], model['G_B']], **cfg.TRAIN.OPTIM)
     optimizer['D'] = build_optimizer([model['D_A'], model['D_B']], **cfg.TRAIN.OPTIM)
 
-    # build lr_scheduler
+    # build lr_scheduler    
     if cfg.TRAIN.SCHEDULER.lr_scheduler is not None:
         lr_scheduler = [build_lr_scheduler(optimizer[key], **cfg.TRAIN.SCHEDULER) \
                         for key in optimizer.keys()]

@@ -22,8 +22,8 @@ from openunreid.utils.torch_utils import copy_state_dict, load_checkpoint
 
 def parge_config():
     parser = argparse.ArgumentParser(description="Testing Re-ID models")
-    parser.add_argument("resume", help="the checkpoint file to test")
-    parser.add_argument("--config", help="test config file path")
+    parser.add_argument("--resume", help="the checkpoint file to test")
+    parser.add_argument("--config", help="test config file path",default=None)
     parser.add_argument(
         "--launcher",
         type=str,
@@ -61,6 +61,7 @@ def main():
     # init distributed training
     args, cfg = parge_config()
     dist = init_dist(cfg)
+    dist = False
     synchronize()
 
     # init logging file
@@ -82,7 +83,8 @@ def main():
             output_device=cfg.gpu,
             find_unused_parameters=True,
         )
-    elif cfg.total_gpus > 1:
+    # elif cfg.total_gpus > 1:
+    else:
         model = torch.nn.DataParallel(model)
 
     # load checkpoint

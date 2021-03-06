@@ -1,4 +1,4 @@
-DATA_ROOT: '../datasets/'
+DATA_ROOT: '/home/jinziqi/Dataset/'
 LOGS_ROOT: '../logs/'
 
 

@@ -89,6 +89,7 @@ def main():
             # number of clusters in an unsupervised dataset
             # must not be larger than the number of images
             num_classes += len(set)
+            print('length of set main.py',len(set))
         else:
             # ground-truth classes for supervised dataset
             num_classes += set.num_pids

@@ -1,4 +1,4 @@
-DATA_ROOT: '../datasets/'
+DATA_ROOT: '/home/jinziqi/Dataset/'
 LOGS_ROOT: '../logs/'
 
 
@@ -8,8 +8,8 @@ MODEL:
   discriminator: 'patchgan_3layers'
   spgan: True
 
-  sync_bn: False
-  samples_per_bn: 64
+  sync_bn: True
+  samples_per_bn: 16
 
 
 DATA:
@@ -20,6 +20,32 @@ DATA:
   norm_std: [0.5, 0.5, 0.5]
 
   TRAIN:
+    # mask
+    mask: [False,False]
+    mask_class: [1,]
+    is_hard : [True,]
+    is_lip: [False,]
+    # original_dir : ['DukeMTMC-reID',]
+    # original_dir : ['MSMT17_V2',]
+    original_dir : ['Market',]
+
+    # mask_dir: ['Market_lip_mask',]
+    # mask_dir: ['DukeMTMC-reID_lip_mask',]
+    # mask_dir: ['MSMT17_V2_lip_mask',]
+
+    # mask_dir: ['DukeMTMC-reID_wsol_smooth_mask',]
+    # mask_dir: ['MSMT17_V2_wsol_smooth_mask',]
+    mask_dir: ['Market_wsol_smooth_mask',]
+
+    # rand_bg_dir : ['/home/jinziqi/Dataset/MSMT17_V2_rand_background',]
+    rand_bg_dir : ['/home/jinziqi/Dataset/Market_rand_background',]
+    # rand_bg_dir : ['/home/jinziqi/Dataset/DukeMTMC-reID_rand_background',]
+
+    # rand_bg_dir : ['/home/jinziqi/Dataset/MSMT17_V2_lip_rand_background',]
+    # rand_bg_dir : ['/home/jinziqi/Dataset/DukeMTMC-reID_lip_rand_background',]
+    # rand_bg_dir : ['/home/jinziqi/Dataset/Market_lip_rand_background',]
+    repalce_proportion: 0.5
+    mix_num: 2
     # augmentation
     is_autoaug: False
 
@@ -38,7 +64,26 @@ DATA:
     # dual augmentation for MMT
     is_mutual_transform: False
     mutual_times: 2
-
+  TEST:
+    # mask
+    mask: [False,False]
+    mask_class: [0,]
+    is_hard : [True,]
+    is_lip: [False,]
+    original_dir : ['DukeMTMC-reID',]
+    # original_dir : ['MSMT17_V2',]
+    # original_dir : ['Market',]
+    # mask_dir: ['Market_lip_mask',]
+    # mask_dir: ['DukeMTMC-reID_lip_mask',]
+    # mask_dir: ['MSMT17_V2_lip_mask',]
+    # mask_dir: ['DukeMTMC-reID_wsol_smooth_mask',]
+    # mask_dir: ['MSMT17_V2_wsol_smooth_mask',]
+    # mask_dir: ['Market_wsol_smooth_mask',]
+    rand_bg_dir : ['/home/jinziqi/Dataset/MSMT17_V2_rand_background',]
+    # rand_bg_dir : ['/home/jinziqi/Dataset/Market_rand_background',]
+    # rand_bg_dir : ['/home/jinziqi/Dataset/DukeMTMC-reID_rand_background',]
+    repalce_proportion: 1
+    mix_num: 2
 
 TRAIN:
   seed: 1
@@ -51,7 +96,7 @@ TRAIN:
   unsup_dataset_indexes: [1,]
 
   epochs: 50
-  iters: 200
+  iters: 800
 
   LOSS:
     losses: {'gan_G': 1., 'recon': 10., 'ide': 5., 'gan_D': 1., 'sia_G': 2., 'sia_M': 1.}
@@ -66,7 +111,7 @@ TRAIN:
 
   # data loader
   LOADER:
-    samples_per_gpu: 8
+    samples_per_gpu: 4
     workers_per_gpu: 2
 
   # optim
@@ -84,5 +129,5 @@ TEST:
 
   # data loader
   LOADER:
-    samples_per_gpu: 32
-    workers_per_gpu: 4
+    samples_per_gpu: 5
+    workers_per_gpu: 1
